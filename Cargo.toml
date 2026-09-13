@@ -1,0 +1,18 @@
+[package]
+name = "mpv-ipc"
+version = "0.1.0"
+authors = ["22"]
+description = "Control mpv processes from Rust via JSON IPC."
+edition = "2024"
+rust-version = "1.85.0"
+license = "MPL-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+libc = "0.2"
+
+[dev-dependencies]
+fltk = { version = "1", features = ["fltk-bundled"] }
