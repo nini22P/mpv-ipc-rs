@@ -1,5 +1,4 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -13,8 +12,6 @@ use crate::MpvCommand;
 use crate::MpvCommandResponse;
 use crate::Result;
 
-static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
-
 #[cfg(windows)]
 pub const IPC_PIPE_BASE: &str = r"\\.\pipe\mpv_ipc_socket";
 #[cfg(unix)]
@@ -25,14 +22,10 @@ pub fn get_ipc_pipe(id: &str) -> String {
 }
 
 pub fn send_command(
-    mut mpv_command: MpvCommand,
+    mpv_command: MpvCommand,
     id: &str,
     ipc_timeout: Duration,
 ) -> Result<MpvCommandResponse> {
-    if mpv_command.request_id.is_none() {
-        mpv_command.request_id = Some(NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst));
-    }
-
     trace!(
         "-> SEND [{}] {}",
         id,
@@ -43,7 +36,7 @@ pub fn send_command(
 
     #[cfg(windows)]
     {
-        let pipe = match OpenOptions::new().read(true).write(true).open(&ipc_pipe) {
+        let stream = match OpenOptions::new().read(true).write(true).open(&ipc_pipe) {
             Ok(p) => p,
             Err(e) => {
                 let err_msg = format!("Failed to open named pipe at '{}': {}", ipc_pipe, e);
@@ -52,7 +45,7 @@ pub fn send_command(
             }
         };
 
-        process_mpv_command(pipe, mpv_command, id, ipc_timeout)
+        process_mpv_command(stream, mpv_command, id, ipc_timeout)
     }
 
     #[cfg(unix)]
@@ -66,7 +59,7 @@ pub fn send_command(
             }
         };
 
-        process_mpv_command(stream, mpv_command, key, ipc_timeout)
+        process_mpv_command(stream, mpv_command, id, ipc_timeout)
     }
 }
 
@@ -76,7 +69,7 @@ fn process_mpv_command<S: Read + Write>(
     id: &str,
     ipc_timeout: Duration,
 ) -> Result<MpvCommandResponse> {
-    let expected_request_id = mpv_command.request_id.unwrap();
+    let expected_request_id = mpv_command.request_id;
 
     let command_json = serde_json::to_string(&mpv_command);
 

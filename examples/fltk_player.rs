@@ -2,7 +2,7 @@ use fltk::{
     app, button::Button, dialog, enums::Color, frame::Frame, prelude::*, valuator::HorNiceSlider,
     window::Window,
 };
-use mpv_ipc::{Mpv, MpvCommand, MpvConfig, MpvEvent};
+use mpv_ipc::{Mpv, MpvConfig, MpvEvent};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,10 +55,7 @@ fn main() -> mpv_ipc::Result<()> {
             false,
         ) {
             mpv_open
-                .command(MpvCommand {
-                    command: vec!["loadfile".into(), file.into(), "replace".into()],
-                    request_id: None,
-                })
+                .command(vec!["loadfile".into(), file.into(), "replace".into()])
                 .ok();
         }
     });
@@ -66,20 +63,18 @@ fn main() -> mpv_ipc::Result<()> {
     let mpv_pause = Arc::clone(&mpv);
     play_btn.set_callback(move |_| {
         mpv_pause
-            .command(MpvCommand {
-                command: vec!["cycle".into(), "pause".into()],
-                request_id: None,
-            })
+            .command(vec!["cycle".into(), "pause".into()])
             .ok();
     });
 
     let mpv_slider = Arc::clone(&mpv);
     slider.set_callback(move |s| {
         mpv_slider
-            .command(MpvCommand {
-                command: vec!["seek".into(), s.value().into(), "absolute+exact".into()],
-                request_id: None,
-            })
+            .command(vec![
+                "seek".into(),
+                s.value().into(),
+                "absolute+exact".into(),
+            ])
             .ok();
     });
 

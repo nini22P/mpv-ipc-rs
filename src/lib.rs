@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -13,6 +13,7 @@ mod process;
 pub use error::{Error, Result};
 
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 pub struct Mpv {
     id: String,
@@ -38,8 +39,21 @@ impl Mpv {
         process::start_mpv_process(mpv_config, &id)
     }
 
-    pub fn command(&self, mpv_command: MpvCommand) -> Result<MpvCommandResponse> {
-        ipc::send_command(mpv_command, &self.id, self.ipc_timeout)
+    pub fn command(&self, command: Vec<serde_json::Value>) -> Result<serde_json::Value> {
+        let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+        let response = ipc::send_command(
+            MpvCommand {
+                command,
+                request_id,
+            },
+            &self.id,
+            self.ipc_timeout,
+        )?;
+        if response.error == "success" {
+            Ok(response.data.unwrap_or_default())
+        } else {
+            Err(Error::MpvCommandError(response.error))
+        }
     }
 
     pub fn try_recv_event(&self) -> Result<Option<MpvEvent>> {

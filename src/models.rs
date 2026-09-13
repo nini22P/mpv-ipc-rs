@@ -37,14 +37,13 @@ impl Default for MpvConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct MpvCommand {
+pub(crate) struct MpvCommand {
     pub command: Vec<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<u32>,
+    pub request_id: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MpvCommandResponse {
+pub(crate) struct MpvCommandResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
     pub error: String,

@@ -8,4 +8,6 @@ pub enum Error {
     MpvProcessError(String),
     #[error("IPC communication error: {0}")]
     IpcError(String),
+    #[error("mpv command error: {0}")]
+    MpvCommandError(String),
 }
