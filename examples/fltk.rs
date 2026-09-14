@@ -11,20 +11,67 @@ fn format_time(secs: f64) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+const BAR_HEIGHT: i32 = 90;
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32)
+    -> i32;
+    fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+    fn SetWindowLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+    fn GetClassLongPtrW(hwnd: isize, index: i32) -> isize;
+    fn SetClassLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+    fn SetLayeredWindowAttributes(hwnd: isize, key: u32, alpha: u8, flags: u32) -> i32;
+}
+
+fn raise_overlay(win: &Window) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        SetWindowPos(win.raw_handle() as isize, 0, 0, 0, 0, 0, 1 | 2 | 0x10);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn fade_overlay(win: &Window, alpha: u8) {
+    unsafe {
+        const GCL_STYLE: i32 = -26;
+        const GWL_EXSTYLE: i32 = -20;
+        const CS_OWNDC: isize = 0x20;
+        const WS_EX_LAYERED: isize = 0x80000;
+        let h = win.raw_handle() as isize;
+        let cls = GetClassLongPtrW(h, GCL_STYLE);
+        let cls_ret = SetClassLongPtrW(h, GCL_STYLE, cls & !CS_OWNDC);
+        let before = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        let set_ret = SetWindowLongPtrW(h, GWL_EXSTYLE, before | WS_EX_LAYERED);
+        let after = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        let layered_ok = SetLayeredWindowAttributes(h, 0, alpha, 0x2) != 0;
+        let ret = SetWindowPos(h, 0, 0, 0, 0, 0, 1 | 2 | 0x10 | 0x20);
+        println!(
+            "fade: cls=0x{:x}->cls_ret=0x{:x} before=0x{:x} set_ret=0x{:x} after=0x{:x} layered_ok={} swp={}",
+            cls, cls_ret, before, set_ret, after, layered_ok, ret
+        );
+    }
+}
+
 fn main() -> mpv_ipc::Result<()> {
     let _app = app::App::default();
 
-    let mut win = Window::new(100, 100, 800, 600, "mpv-ipc FLTK Player");
+    let mut win = Window::new(100, 100, 800, 600, "mpv-ipc FLTK");
     win.make_resizable(true);
 
-    let mut video = Window::new(0, 0, 800, 520, "");
+    let mut video = Window::new(0, 0, 800, 600, "");
     video.set_color(Color::Black);
     video.end();
 
-    let mut open_btn = Button::new(10, 540, 80, 30, "Open");
-    let mut play_btn = Button::new(100, 540, 80, 30, "Pause");
-    let mut slider = HorNiceSlider::new(190, 545, 600, 20, "");
-    let mut time_display = Frame::new(10, 570, 400, 30, "0:00 / 0:00");
+    let mut overlay = Window::new(0, 510, 800, BAR_HEIGHT, "");
+    overlay.set_color(Color::from_rgb(20, 20, 20));
+    let mut open_btn = Button::new(10, 10, 80, 30, "Open");
+    let mut play_btn = Button::new(100, 10, 80, 30, "Pause");
+    let mut slider = HorNiceSlider::new(190, 15, 600, 20, "");
+    slider.set_color(Color::from_rgb(90, 90, 90));
+    let mut time_display = Frame::new(10, 45, 400, 30, "0:00 / 0:00");
+    overlay.end();
 
     win.end();
     win.show();
@@ -46,6 +93,8 @@ fn main() -> mpv_ipc::Result<()> {
         ..Default::default()
     })?);
 
+    raise_overlay(&overlay);
+
     let mpv_open = Arc::clone(&mpv);
     open_btn.set_callback(move |_| {
         if let Some(file) = dialog::file_chooser(
@@ -62,9 +111,7 @@ fn main() -> mpv_ipc::Result<()> {
 
     let mpv_pause = Arc::clone(&mpv);
     play_btn.set_callback(move |_| {
-        mpv_pause
-            .command(vec!["cycle".into(), "pause".into()])
-            .ok();
+        mpv_pause.command(vec!["cycle".into(), "pause".into()]).ok();
     });
 
     let mpv_slider = Arc::clone(&mpv);
@@ -78,8 +125,18 @@ fn main() -> mpv_ipc::Result<()> {
             .ok();
     });
 
+    let mut last_size = (win.w(), win.h());
     while win.visible() {
         let mut changed = false;
+        let (ww, wh) = (win.w(), win.h());
+        if (ww, wh) != last_size {
+            last_size = (ww, wh);
+            video.resize(0, 0, ww, wh);
+            overlay.resize(0, wh - BAR_HEIGHT, ww, BAR_HEIGHT);
+            raise_overlay(&overlay);
+            fade_overlay(&overlay, 190);
+            win.redraw();
+        }
 
         while let Some(event) = mpv.try_recv_event()? {
             println!("{:?}", event);
