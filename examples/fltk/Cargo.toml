@@ -1,0 +1,9 @@
+[package]
+name = "mpv-fltk"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fltk = { version = "1", features = ["fltk-bundled"] }
+mpv-ipc = { path = "../.." }

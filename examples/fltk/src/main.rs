@@ -1,17 +1,32 @@
 use fltk::{
-    app, button::Button, dialog, enums::Color, frame::Frame, prelude::*, valuator::HorNiceSlider,
+    app,
+    button::Button,
+    dialog,
+    enums::{Align, Color},
+    frame::Frame,
+    prelude::*,
+    valuator::HorNiceSlider,
     window::Window,
 };
 use mpv_ipc::{Mpv, MpvConfig, MpvEvent};
 use std::sync::Arc;
-use std::time::Duration;
 
 fn format_time(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
     format!("{}:{:02}", total / 60, total % 60)
 }
 
-const BAR_HEIGHT: i32 = 90;
+const WIN_W: i32 = 1280;
+const WIN_H: i32 = 720;
+const BAR_H: i32 = 48;
+const MARGIN: i32 = 10;
+const BTN_W: i32 = 70;
+const CTRL_H: i32 = 28;
+const TIME_W: i32 = 120;
+
+const SLIDER_X: i32 = MARGIN + 2 * (BTN_W + MARGIN);
+const TIME_X: i32 = WIN_W - MARGIN - TIME_W;
+const SLIDER_W: i32 = TIME_X - SLIDER_X;
 
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
@@ -54,27 +69,47 @@ fn fade_overlay(win: &Window, alpha: u8) {
     }
 }
 
+fn show_progress(overlay: &mut Window, time_display: &mut Frame, slider: &mut HorNiceSlider) {
+    time_display.set_label(&format!(
+        "{} / {}",
+        format_time(slider.value()),
+        format_time(slider.maximum())
+    ));
+    let label_w = time_display.measure_label().0 + 8;
+    let label_x = overlay.w() - MARGIN - label_w;
+    time_display.resize(label_x, 10, label_w, CTRL_H);
+    slider.resize(SLIDER_X, 14, (label_x - SLIDER_X - MARGIN).max(20), 20);
+    overlay.init_sizes();
+}
+
 fn main() -> mpv_ipc::Result<()> {
     let _app = app::App::default();
 
-    let mut win = Window::new(100, 100, 800, 600, "mpv-ipc FLTK");
-    win.make_resizable(true);
-
-    let mut video = Window::new(0, 0, 800, 600, "");
+    let mut win = Window::new(100, 100, WIN_W, WIN_H, "mpv-ipc FLTK");
+    let mut video = Window::new(0, 0, WIN_W, WIN_H, "");
     video.set_color(Color::Black);
     video.end();
 
-    let mut overlay = Window::new(0, 510, 800, BAR_HEIGHT, "");
+    let mut overlay = Window::new(0, WIN_H - BAR_H, WIN_W, BAR_H, "");
     overlay.set_color(Color::from_rgb(20, 20, 20));
-    let mut open_btn = Button::new(10, 10, 80, 30, "Open");
-    let mut play_btn = Button::new(100, 10, 80, 30, "Pause");
-    let mut slider = HorNiceSlider::new(190, 15, 600, 20, "");
+    let mut open_btn = Button::new(MARGIN, 10, BTN_W, CTRL_H, "Open");
+    let mut play_btn = Button::new(MARGIN + BTN_W + MARGIN, 10, BTN_W, CTRL_H, "Pause");
+    let mut slider = HorNiceSlider::new(SLIDER_X, 14, SLIDER_W, 20, "");
     slider.set_color(Color::from_rgb(90, 90, 90));
-    let mut time_display = Frame::new(10, 45, 400, 30, "0:00 / 0:00");
+    let mut time_display = Frame::new(TIME_X, 10, TIME_W, CTRL_H, "0:00 / 0:00");
+    time_display.set_align(Align::Right | Align::Inside);
+    time_display.set_label_color(Color::White);
     overlay.end();
+    overlay.resizable(&slider);
 
+    let mut spacer = Frame::new(0, 0, 1, 1, "");
+    spacer.hide();
     win.end();
+    win.resizable(&spacer);
+    win.size_range(480, 320, 0, 0);
+    win.clone().center_screen();
     win.show();
+    show_progress(&mut overlay, &mut time_display, &mut slider);
 
     let wid = video.raw_handle() as i64;
 
@@ -94,17 +129,20 @@ fn main() -> mpv_ipc::Result<()> {
     })?);
 
     raise_overlay(&overlay);
+    fade_overlay(&overlay, 190);
 
     let mpv_open = Arc::clone(&mpv);
     open_btn.set_callback(move |_| {
-        if let Some(file) = dialog::file_chooser(
-            "Select a video",
-            "*.{mp4,mkv,avi,mov,webm,flv,ts,m4v}",
-            ".",
-            false,
-        ) {
+        let mut chooser = dialog::NativeFileChooser::new(dialog::FileDialogType::BrowseFile);
+        chooser.set_title("Select a video");
+        chooser.set_filter("Video Files\t*.{mp4,mkv,avi,mov,webm,flv,ts,m4v}");
+        if let Ok(dialog::FileDialogAction::Success) = chooser.try_show() {
             mpv_open
-                .command(vec!["loadfile".into(), file.into(), "replace".into()])
+                .command(vec![
+                    "loadfile".into(),
+                    chooser.filename().to_string_lossy().into_owned().into(),
+                    "replace".into(),
+                ])
                 .ok();
         }
     });
@@ -125,57 +163,33 @@ fn main() -> mpv_ipc::Result<()> {
             .ok();
     });
 
-    let mut last_size = (win.w(), win.h());
     while win.visible() {
-        let mut changed = false;
-        let (ww, wh) = (win.w(), win.h());
-        if (ww, wh) != last_size {
-            last_size = (ww, wh);
-            video.resize(0, 0, ww, wh);
-            overlay.resize(0, wh - BAR_HEIGHT, ww, BAR_HEIGHT);
-            raise_overlay(&overlay);
-            fade_overlay(&overlay, 190);
-            win.redraw();
-        }
-
         while let Some(event) = mpv.try_recv_event()? {
             println!("{:?}", event);
-            match event {
-                MpvEvent::PropertyChange { name, data, .. } => match name.as_str() {
+            if let MpvEvent::PropertyChange { name, data, .. } = event {
+                match name.as_str() {
                     "pause" => {
                         let paused = data.and_then(|v| v.as_bool()).unwrap_or(false);
                         play_btn.set_label(if paused { "Play" } else { "Pause" });
-                        changed = true;
                     }
                     "time-pos" => {
                         if let Some(pos) = data.and_then(|v| v.as_f64()) {
                             slider.set_value(pos);
-                            changed = true;
+                            show_progress(&mut overlay, &mut time_display, &mut slider);
                         }
                     }
                     "duration" => {
                         if let Some(dur) = data.and_then(|v| v.as_f64()) {
                             slider.set_range(0.0, dur);
-                            changed = true;
+                            show_progress(&mut overlay, &mut time_display, &mut slider);
                         }
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
 
-        if changed {
-            time_display.set_label(&format!(
-                "{} / {}",
-                format_time(slider.value()),
-                format_time(slider.maximum())
-            ));
-            win.redraw();
-        }
-
-        app::check();
-        std::thread::sleep(Duration::from_millis(20));
+        let _ = app::wait_for(0.016);
     }
 
     mpv.stop()?;
