@@ -56,6 +56,14 @@ impl Mpv {
         }
     }
 
+    pub fn recv_event(&self) -> Result<MpvEvent> {
+        self.event_rx
+            .lock()
+            .unwrap()
+            .recv()
+            .map_err(|_| Error::IpcError("Event channel disconnected".to_string()))
+    }
+
     pub fn try_recv_event(&self) -> Result<Option<MpvEvent>> {
         match self.event_rx.lock().unwrap().try_recv() {
             Ok(event) => Ok(Some(event)),

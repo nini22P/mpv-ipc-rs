@@ -131,13 +131,13 @@ fn main() -> mpv_ipc::Result<()> {
     raise_overlay(&overlay);
     fade_overlay(&overlay, 190);
 
-    let mpv_open = Arc::clone(&mpv);
+    let mpv_clone = Arc::clone(&mpv);
     open_btn.set_callback(move |_| {
         let mut chooser = dialog::NativeFileChooser::new(dialog::FileDialogType::BrowseFile);
         chooser.set_title("Select a video");
         chooser.set_filter("Video Files\t*.{mp4,mkv,avi,mov,webm,flv,ts,m4v}");
         if let Ok(dialog::FileDialogAction::Success) = chooser.try_show() {
-            mpv_open
+            mpv_clone
                 .command(vec![
                     "loadfile".into(),
                     chooser.filename().to_string_lossy().into_owned().into(),
@@ -147,14 +147,14 @@ fn main() -> mpv_ipc::Result<()> {
         }
     });
 
-    let mpv_pause = Arc::clone(&mpv);
+    let mpv_clone = Arc::clone(&mpv);
     play_btn.set_callback(move |_| {
-        mpv_pause.command(vec!["cycle".into(), "pause".into()]).ok();
+        mpv_clone.command(vec!["cycle".into(), "pause".into()]).ok();
     });
 
-    let mpv_slider = Arc::clone(&mpv);
+    let mpv_clone = Arc::clone(&mpv);
     slider.set_callback(move |s| {
-        mpv_slider
+        mpv_clone
             .command(vec![
                 "seek".into(),
                 s.value().into(),
@@ -163,8 +163,16 @@ fn main() -> mpv_ipc::Result<()> {
             .ok();
     });
 
-    while win.visible() {
-        while let Some(event) = mpv.try_recv_event()? {
+    let (event_sender, event_receiver) = app::channel::<MpvEvent>();
+    let mpv_clone = Arc::clone(&mpv);
+    std::thread::spawn(move || {
+        while let Ok(event) = mpv_clone.recv_event() {
+            event_sender.send(event);
+        }
+    });
+
+    while win.visible() && app::wait() {
+        while let Some(event) = event_receiver.recv() {
             println!("{:?}", event);
             if let MpvEvent::PropertyChange { name, data, .. } = event {
                 match name.as_str() {
@@ -188,8 +196,6 @@ fn main() -> mpv_ipc::Result<()> {
                 }
             }
         }
-
-        let _ = app::wait_for(0.016);
     }
 
     mpv.stop()?;
