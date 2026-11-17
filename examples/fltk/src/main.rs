@@ -48,7 +48,7 @@ fn raise_overlay(win: &Window) {
 }
 
 #[cfg(target_os = "windows")]
-fn fade_overlay(win: &Window, alpha: u8) {
+fn apply_layered_attributes(win: &Window, color_key: u32, alpha: u8, flags: u32) {
     unsafe {
         const GCL_STYLE: i32 = -26;
         const GWL_EXSTYLE: i32 = -20;
@@ -60,13 +60,25 @@ fn fade_overlay(win: &Window, alpha: u8) {
         let before = GetWindowLongPtrW(h, GWL_EXSTYLE);
         let set_ret = SetWindowLongPtrW(h, GWL_EXSTYLE, before | WS_EX_LAYERED);
         let after = GetWindowLongPtrW(h, GWL_EXSTYLE);
-        let layered_ok = SetLayeredWindowAttributes(h, 0, alpha, 0x2) != 0;
+        let layered_ok = SetLayeredWindowAttributes(h, color_key, alpha, flags) != 0;
         let ret = SetWindowPos(h, 0, 0, 0, 0, 0, 1 | 2 | 0x10 | 0x20);
         println!(
-            "fade: cls=0x{:x}->cls_ret=0x{:x} before=0x{:x} set_ret=0x{:x} after=0x{:x} layered_ok={} swp={}",
-            cls, cls_ret, before, set_ret, after, layered_ok, ret
+            "layered(flags=0x{:x}): cls=0x{:x}->cls_ret=0x{:x} before=0x{:x} set_ret=0x{:x} after=0x{:x} layered_ok={} swp={}",
+            flags, cls, cls_ret, before, set_ret, after, layered_ok, ret
         );
     }
+}
+
+#[cfg(target_os = "windows")]
+fn fade_overlay(win: &Window, alpha: u8) {
+    const LWA_ALPHA: u32 = 0x2;
+    apply_layered_attributes(win, 0, alpha, LWA_ALPHA);
+}
+
+#[cfg(target_os = "windows")]
+fn set_layered_colorkey(win: &Window, color_key: u32) {
+    const LWA_COLORKEY: u32 = 0x1;
+    apply_layered_attributes(win, color_key, 0, LWA_COLORKEY);
 }
 
 fn show_progress(overlay: &mut Window, time_display: &mut Frame, slider: &mut HorNiceSlider) {
@@ -90,8 +102,12 @@ fn main() -> mpv_ipc::Result<()> {
     video.set_color(Color::Black);
     video.end();
 
+    let mut bg = Window::new(0, WIN_H - BAR_H, WIN_W, BAR_H, "");
+    bg.set_color(Color::from_rgb(20, 20, 20));
+    bg.end();
+
     let mut overlay = Window::new(0, WIN_H - BAR_H, WIN_W, BAR_H, "");
-    overlay.set_color(Color::from_rgb(20, 20, 20));
+    overlay.set_color(Color::from_rgb(1, 1, 1));
     let mut open_btn = Button::new(MARGIN, 10, BTN_W, CTRL_H, "Open");
     let mut play_btn = Button::new(MARGIN + BTN_W + MARGIN, 10, BTN_W, CTRL_H, "Pause");
     let mut slider = HorNiceSlider::new(SLIDER_X, 14, SLIDER_W, 20, "");
@@ -128,8 +144,11 @@ fn main() -> mpv_ipc::Result<()> {
         ..Default::default()
     })?);
 
+    raise_overlay(&bg);
+    fade_overlay(&bg, 50);
+
     raise_overlay(&overlay);
-    fade_overlay(&overlay, 190);
+    set_layered_colorkey(&overlay, 0x00010101);
 
     let mpv_clone = Arc::clone(&mpv);
     open_btn.set_callback(move |_| {
